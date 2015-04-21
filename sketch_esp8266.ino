@@ -2,15 +2,15 @@
 
 #include <DHT22_430.h>
 
-#define DHT_PIN PD_0
-#define ESP8266_CH_PD_PIN PB_5
-#define BUZZER_PIN PB_4
-#define RED_LED PF_1
+#define DHT_PIN P2_1
+#define ESP8266_CH_PD_PIN P2_2
+#define BUZZER_PIN P1_4
+#define RED_LED P1_0
 
-const unsigned kMaxRcvBufSz = 1024U;
-const unsigned kMaxSndBufSz = 256U;
-const unsigned kMaxDHTBufSz = 256U;
-const unsigned kMeasurementsDelayMs = 10000U;
+const unsigned kMaxRcvBufSz = 64U;
+const unsigned kMaxSndBufSz = 64U;
+const unsigned kMaxDHTBufSz = 32U;
+const unsigned kMeasurementsDelayS = 60U;
 const unsigned kAlarmDelayMs = 1000U;
 const unsigned kMaxRetryCnt = 100U;
 
@@ -27,19 +27,11 @@ void setup()
 
   playInitTone ();
 
-  Serial1.begin (115200);
   Serial.begin (115200);
 
   dht.begin ();
 
   esp8266reboot ();
-
-  Serial.println ("Loop started...");
-
-  esp8266cmd ("AT");    
-  esp8266cmd ("AT+CIPMODE=0");
-  esp8266cmd ("AT+CIPMUX=0");
-  esp8266cmd ("AT+CIPSTART=\"TCP\",\"192.168.1.100\",9977");
 }
 
 void loop()
@@ -47,19 +39,18 @@ void loop()
   esp8266rx (NULL);  
 
   boolean flag = dht.get ();
-  int32_t h = dht.humidityX10 ();
-  int32_t t = dht.temperatureX10 ();
+  int h = dht.humidityX10 ();
+  int t = dht.temperatureX10 ();
 
   if (!flag) {
     failure ("Failed to read from DHT!");
   } 
   else {
     sprintf (dht_buf, "[H:%d.%d,T:%d.%d]", h / 10, h % 10, t / 10, t % 10);
-    Serial.println (dht_buf);
     esp8266send (dht_buf); 
   }
 
-  delay (kMeasurementsDelayMs);
+  sleepSeconds (kMeasurementsDelayS);
 }
 
 void sTone (unsigned note, unsigned len)
@@ -92,38 +83,35 @@ void playFailureTone ()
 
 void esp8266shutdown ()
 {
-  Serial.println ("Shutdown ESP8266...");
   digitalWrite (ESP8266_CH_PD_PIN, LOW);
-  delay (5000);
+  delay (100);
 }
 
 void esp8266poweron ()
 {
-  Serial.println ("Power on ESP8266...");
   digitalWrite (ESP8266_CH_PD_PIN, HIGH);
-
-  Serial.println ("Clean ESP8266 boot buffer...");
   delay (5000);
 
-  while (Serial1.available () > 0) { 
-    Serial1.read (); 
+  while (Serial.available () > 0) { 
+    Serial.read (); 
   }
 }
 
 void esp8266reboot () 
 {
-  Serial.println ();
-  Serial.println ("***");
-  Serial.println ();  
-
   esp8266shutdown ();
   esp8266poweron ();
+  
+  esp8266cmd ("AT");    
+  esp8266cmd ("AT+CIPMODE=0");
+  esp8266cmd ("AT+CIPMUX=0");
+  esp8266cmd ("AT+CIPSTART=\"TCP\",\"192.168.1.100\",9977");
 }
 
 void esp8266waitrx (const char * cmd) {
   unsigned retry_cnt = 0;
 
-  while (!Serial1.available ()) { 
+  while (!Serial.available ()) { 
     ++retry_cnt;
     delay (100); 
 
@@ -137,8 +125,8 @@ void esp8266rx (const char * cmd) {
   unsigned bytes_available = 0;
   unsigned offset = 0;
 
-  while (bytes_available = Serial1.available ()) {
-    offset += Serial1.readBytes (in_buf + offset, bytes_available);        
+  while ((bytes_available = Serial.available ())) {
+    offset += Serial.readBytes (in_buf + offset, bytes_available);        
   }
 
   if (offset == 0) {
@@ -150,15 +138,12 @@ void esp8266rx (const char * cmd) {
   if (strstr (in_buf, "ERROR") != NULL) {
     failure (cmd);
   }
-
-  Serial.println (in_buf);
-  Serial.flush ();
 }
 
 void esp8266cmd (const char * cmd) 
 {
-  Serial1.println (cmd);
-  Serial1.flush ();
+  Serial.println (cmd);
+  Serial.flush ();
 
   esp8266waitrx (cmd);
   esp8266rx (cmd);
@@ -181,14 +166,6 @@ void failure (const char * cmd)
   unsigned tone_interval = 1U;
 
   while (true) {
-    Serial.print ("System halted: ");
-    if (cmd) {
-      Serial.println (cmd);
-    } 
-    else {
-      Serial.println ("[NO_CMD]");
-    }
-
     digitalWrite (RED_LED, (cnt % 2) ? HIGH : LOW);
     delay (kAlarmDelayMs);
 
@@ -196,7 +173,7 @@ void failure (const char * cmd)
       playFailureTone ();
       tone_interval *= 10U;
     }
-
+    
     ++cnt;
   }
 }
