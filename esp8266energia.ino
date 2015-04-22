@@ -2,21 +2,25 @@
 
 #include <DHT22_430.h>
 
+#define SRV_ADDR "192.168.1.100"
+#define SRV_PORT "9977"
+
 #define DHT_PIN P2_1
 #define ESP8266_CH_PD_PIN P2_2
 #define BUZZER_PIN P1_4
 #define RED_LED P1_0
 
-const unsigned kMaxRcvBufSz = 64U;
-const unsigned kMaxSndBufSz = 64U;
-const unsigned kMaxDHTBufSz = 32U;
-const unsigned kMeasurementsDelayS = 60U;
-const unsigned kAlarmDelayMs = 1000U;
-const unsigned kMaxRetryCnt = 100U;
+#define MAX_IN_BUF_SZ 64U
+#define MAX_OUT_BUF_SZ 64U
+#define MAX_AUX_BUF_SZ 32U
 
-char in_buf[kMaxRcvBufSz];
-char send_buf[kMaxSndBufSz];
-char dht_buf[kMaxDHTBufSz];
+#define MEASUREMENTS_DELAY_S 60U
+#define ALARM_DELAY_MS 1000U
+#define MAX_RETRY_CNT 100U
+
+char in_buf[MAX_IN_BUF_SZ];
+char out_buf[MAX_OUT_BUF_SZ];
+char aux_buf[MAX_AUX_BUF_SZ];
 
 DHT22 dht (DHT_PIN);
 
@@ -43,14 +47,21 @@ void loop()
   int t = dht.temperatureX10 ();
 
   if (!flag) {
-    failure ("Failed to read from DHT!");
+    failure (); // failed to read from DHT sensor
   } 
   else {
-    sprintf (dht_buf, "[H:%d.%d,T:%d.%d]", h / 10, h % 10, t / 10, t % 10);
-    esp8266send (dht_buf); 
+    sprintf (aux_buf, "[H:%d.%d,T:%d.%d]", h / 10, h % 10, t / 10, t % 10);
+    esp8266send (aux_buf); 
   }
 
-  sleepSeconds (kMeasurementsDelayS);
+  goLowPower ();
+}
+
+void goLowPower ()
+{
+  sprintf (aux_buf, "AT+GSLP=", MEASUREMENTS_DELAY_S * 1000 - 250);
+  esp8266cmd (aux_buf);
+  sleepSeconds (MEASUREMENTS_DELAY_S);   
 }
 
 void sTone (unsigned note, unsigned len)
@@ -101,11 +112,11 @@ void esp8266reboot ()
 {
   esp8266shutdown ();
   esp8266poweron ();
-  
+
   esp8266cmd ("AT");    
   esp8266cmd ("AT+CIPMODE=0");
   esp8266cmd ("AT+CIPMUX=0");
-  esp8266cmd ("AT+CIPSTART=\"TCP\",\"192.168.1.100\",9977");
+  esp8266cmd ("AT+CIPSTART=\"TCP\",\"" SRV_ADDR "\"," SRV_PORT);
 }
 
 void esp8266waitrx (const char * cmd) {
@@ -115,8 +126,8 @@ void esp8266waitrx (const char * cmd) {
     ++retry_cnt;
     delay (100); 
 
-    if (retry_cnt > kMaxRetryCnt) { 
-      failure (cmd);
+    if (retry_cnt > MAX_RETRY_CNT) { 
+      failure (); // Failed to read from ESP8266
     }
   }
 }
@@ -136,7 +147,7 @@ void esp8266rx (const char * cmd) {
   in_buf[offset+1] = '\0';  
 
   if (strstr (in_buf, "ERROR") != NULL) {
-    failure (cmd);
+    failure (); // ESP8266 returned error
   }
 }
 
@@ -152,13 +163,13 @@ void esp8266cmd (const char * cmd)
 void esp8266send (const char * packet)
 { 
   unsigned l = strlen (packet) + 2U;
-  sprintf (send_buf, "AT+CIPSEND=%d", l);
+  sprintf (out_buf, "AT+CIPSEND=%d", l);
 
-  esp8266cmd (send_buf);
+  esp8266cmd (out_buf);
   esp8266cmd (packet);
 }
 
-void failure (const char * cmd)
+void failure ()
 {  
   pinMode (RED_LED, OUTPUT);
 
@@ -167,14 +178,15 @@ void failure (const char * cmd)
 
   while (true) {
     digitalWrite (RED_LED, (cnt % 2) ? HIGH : LOW);
-    delay (kAlarmDelayMs);
+    sleep (ALARM_DELAY_MS);
 
     if ((cnt % tone_interval) == 0) {
       playFailureTone ();
       tone_interval *= 10U;
     }
-    
+
     ++cnt;
   }
 }
+
 
